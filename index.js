@@ -22,6 +22,7 @@ const userAgent = util.format('Humblebundle-Ebook-Downloader/%s', packageInfo.ve
 
 const SUPPORTED_FORMATS = ['epub', 'mobi', 'pdf', 'pdf_hd', 'cbz']
 const ALLOWED_FORMATS = SUPPORTED_FORMATS.concat(['all', 'any']).sort()
+const PREFERRED_FORMATS = ['cbz', 'pdf_hd', 'pdf', 'epub', 'mobi']
 
 commander
   .version(packageInfo.version)
@@ -431,14 +432,32 @@ function downloadBundles (next, bundles) {
         return commander.format === 'all' || commander.format === 'any' || normalizedFormat === commander.format
       })
 
+      var bestIndex = 10
       for (var filteredDownload of filteredDownloadStructs) {
-        // This is where we pick the version we want
-        console.log(colors.blue('filteredDownload (%s) || subproduct (%s)'), filteredDownload, subproduct.human_name)
-        bundleDownloads.push({
-          bundle: bundleName,
-          download: filteredDownload,
-          name: subproduct.human_name
-        })
+        // This is where we pick the format we want
+        var index
+        var tempBundles = []
+        console.log(colors.yellow('filteredDownload (%s) || subproduct (%s) || subproduct name (%s)'), filteredDownload, subproduct, subproduct.human_name)
+        if (commander.format === 'any') {
+          console.log(colors.yellow('found any'))
+          // Now we check where the format sits on the list of preference
+          var normalizedFormat = normalizeFormat(filteredDownload.name)
+          index = PREFERRED_FORMATS.indexOf(normalizedFormat)
+          if (index < bestIndex) {
+            if (bestIndex < 10) {
+              bundleDownloads.pop()
+              console.log(colors.green('replacing index'))
+            }
+            bestIndex = index
+            bundleDownloads.push({
+              bundle: bundleName,
+              download: filteredDownload,
+              name: subproduct.human_name
+            })
+            console.log(colors.yellow('tempBundles (%s)', tempBundles))
+          }
+
+        }
       }
     }
 
