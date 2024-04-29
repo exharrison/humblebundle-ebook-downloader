@@ -1,6 +1,10 @@
 {
   "name": "humblebundle-ebook-downloader",
+<<<<<<< HEAD
   "version": "1.0.19",
+=======
+  "version": "1.0.18",
+>>>>>>> 72e3cc3 (1.0.18)
   "license": "Unlicense",
   "main": "index.js",
   "bin": {
