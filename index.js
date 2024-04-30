@@ -455,16 +455,13 @@ function downloadBundles (next, bundles) {
         // This is where we pick the format we want
         var index
         var tempBundles = []
-        console.log(colors.yellow('filteredDownload (%s) || subproduct (%s) || subproduct name (%s)'), filteredDownload, subproduct, subproduct.human_name)
         if (commander.format === 'any') {
-          console.log(colors.yellow('found any'))
           // Now we check where the format sits on the list of preference
           var normalizedFormat = normalizeFormat(filteredDownload.name)
           index = ORDERED_FORMATS.indexOf(normalizedFormat)
           if (index < bestIndex) {
             if (bestIndex < 10) {
               bundleDownloads.pop()
-              console.log(colors.green('replacing index'))
             }
             bestIndex = index
             bundleDownloads.push({
@@ -472,7 +469,6 @@ function downloadBundles (next, bundles) {
               download: filteredDownload,
               name: subproduct.human_name
             })
-            console.log(colors.yellow('tempBundles (%s)', tempBundles))
           }
 
         }
