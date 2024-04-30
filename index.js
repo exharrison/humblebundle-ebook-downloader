@@ -23,12 +23,19 @@ const userAgent = util.format('Humblebundle-Ebook-Downloader/%s', packageInfo.ve
 const SUPPORTED_FORMATS = ['epub', 'mobi', 'pdf', 'pdf_hd', 'cbz']
 const ALLOWED_FORMATS = SUPPORTED_FORMATS.concat(['all', 'any']).sort()
 const PREFERRED_FORMATS = ['cbz', 'pdf_hd', 'pdf', 'epub', 'mobi']
+var ORDERED_FORMATS = PREFERRED_FORMATS
+
+
+function order(val) {
+  return val.split(',')
+}
 
 commander
   .version(packageInfo.version)
   .option('-d, --download-folder <downloader_folder>', 'Download folder', 'download')
   .option('-l, --download-limit <download_limit>', 'Parallel download limit', 1)
   .option('-f, --format <format>', util.format('What format to download the ebook in (%s)', ALLOWED_FORMATS.join(', ')), 'epub')
+  .option('-o, --order <format>', util.format('What order to prefer ebooks in (%s)', PREFERRED_FORMATS.join(', ')), order)
   .option('--auth-token <auth-token>', 'Optional: If you want to run headless, you can specify your authentication cookie from your browser (_simpleauth_sess)')
   .option('-a, --all', 'Download all bundles')
   .option('--debug', 'Enable debug logging', false)
@@ -37,6 +44,17 @@ commander
 if (ALLOWED_FORMATS.indexOf(commander.format) === -1) {
   console.error(colors.red('Invalid format selected.'))
   commander.help()
+}
+
+if (commander.order) {
+  commander.format = 'any'
+  for (var format of commander.order) {
+    if (PREFERRED_FORMATS.indexOf(format) === -1) {
+      console.error(colors.red('Invalid format in ordered list.'))
+      commander.help()
+    }
+  }
+  ORDERED_FORMATS = commander.order
 }
 
 const configPath = path.resolve(os.homedir(), '.humblebundle_ebook_downloader.json')
@@ -442,7 +460,7 @@ function downloadBundles (next, bundles) {
           console.log(colors.yellow('found any'))
           // Now we check where the format sits on the list of preference
           var normalizedFormat = normalizeFormat(filteredDownload.name)
-          index = PREFERRED_FORMATS.indexOf(normalizedFormat)
+          index = ORDERED_FORMATS.indexOf(normalizedFormat)
           if (index < bestIndex) {
             if (bestIndex < 10) {
               bundleDownloads.pop()
