@@ -24,6 +24,85 @@ const SUPPORTED_FORMATS = ['epub', 'mobi', 'pdf', 'pdf_hd', 'cbz']
 const ALLOWED_FORMATS = SUPPORTED_FORMATS.concat(['all', 'any']).sort()
 const PREFERRED_FORMATS = ['cbz', 'pdf_hd', 'pdf', 'epub', 'mobi']
 var ORDERED_FORMATS = PREFERRED_FORMATS
+var NUMBER_OF_BUNDLES = 0
+
+/* Setup catalog objects and files to read from and write to */
+/* Basic catalog */
+var catalog_obj = {
+  "Book Bundles": 0,
+  "All Bundles": 0,
+  bundles: []
+};
+var catalog_file_name = 'basic_catalog.json'
+var catalog_path = './'
+var catalog_file = catalog_path + catalog_file_name
+let old_catalog_json;
+try {
+  old_catalog_json = require(catalog_file);
+} catch (error) {
+  old_catalog_json = { bundles: [] };
+}
+
+/* Detailed catalog */
+var ext_catalog_obj = {
+  "Book Bundles": 0,
+  "All Bundles": 0,
+  bundles: []
+};
+var ext_catalog_file_name = 'detailed_catalog.json'
+var ext_catalog_path = './'
+var ext_catalog_file = ext_catalog_path + ext_catalog_file_name
+let old_ext_catalog_json;
+try {
+  old_ext_catalog_json = require(ext_catalog_file);
+} catch (error) {
+  old_ext_catalog_json = { bundles: [] };
+}
+
+/* Set up logging to file */
+const today = new Date().toISOString()
+const winston = require('winston');
+
+// const csv_logger = new (winston.Logger)({
+//   transports: [
+//     new (winston.transports.File)({
+//       filename: "audit.csv",
+//       json: false,
+//       formatter: csv_formatter
+//     })
+//   ]
+// })
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.splat(),
+    // winston.format.simple()
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'record.log' })
+    // new (winston.transports.File)({
+    //   filename: "audit.csv",
+    //   json: false,
+    //   formatter: csv_formatter
+    // })
+  ]
+});
+logger.info('Humble audit at %s', today);
+
+const catalog = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.splat(),
+    // winston.format.simple()
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'record.log' })
+  ]
+});
+catalog.info('Humble audit at %s', today);
 
 
 function order(val) {
@@ -38,6 +117,10 @@ commander
   .option('-o, --order <format>', util.format('What order to prefer ebooks in (%s)', PREFERRED_FORMATS.join(', ')), order)
   .option('--auth-token <auth-token>', 'Optional: If you want to run headless, you can specify your authentication cookie from your browser (_simpleauth_sess)')
   .option('-a, --all', 'Download all bundles')
+  .option('-b, --bundles <number of bundles to download>', 'Download what is new to your downloads. This will download the first n bundles you have not yet downloaded.')
+  .option('-r, --record', 'Record an audit of bundle information')
+  .option('-c, --csv', 'Record the audit in csv format')
+  .option('-j, --json', 'Record the audit in json format')
   .option('--debug', 'Enable debug logging', false)
   .parse(process.argv)
 
@@ -55,6 +138,22 @@ if (commander.order) {
     }
   }
   ORDERED_FORMATS = commander.order
+}
+
+/* If this is running in this mode, the idea is to download all of the bundles
+  in batches to mirror your collection locally. However, many people might have
+  too many bundles to store locally. So this allows you to download them all 
+  and store them over network storage or other off-computer storage. This will
+  use the display bundle function to collect a json struct of all of the 
+  bundles found online. Anything that has been recorded locally as downloaded
+  will have the downloaded flag set to true. Then this will overload the
+  downloadbundles function to download the next 'n' number of bundles and once
+  that is completed, those bundles will have their flag set to true. Then at
+  exit, the records will be written to disk.
+*/
+if (commander.bundles) {
+  /* Set the number of bundles to download each run. */
+  NUMBER_OF_BUNDLES=commander.bundles
 }
 
 const configPath = path.resolve(os.homedir(), '.humblebundle_ebook_downloader.json')
@@ -232,6 +331,7 @@ function fetchOrders (next, session) {
     var total = response.body.length
     var done = 0
 
+    catalog_obj['All Bundles']=ext_catalog_obj['All Bundles'] = total
     var orderInfoLimiter = new Bottleneck({
       maxConcurrent: 5,
       minTime: 500
@@ -282,24 +382,140 @@ function displayOrders (next, orders) {
     options.push(order.product.human_name)
   }
 
+  catalog_obj['Book Bundles']=ext_catalog_obj['Book Bundles']=orders.length
+  /* Generate the updated basic catalog here */
+  for (var order of orders) {
+    // Find matching entry in old catalog
+    const oldEntry = old_catalog_json.bundles.find(entry => 
+      entry.gamekey === order.gamekey || 
+      entry.uid === order.uid || 
+      entry.machine_name === order.product.machine_name
+    );
+
+    catalog_obj.bundles.push({
+      "human_name": order.product.human_name,
+      "machine_name": order.product.machine_name,
+      "amount_spent": order.amount_spent,
+      "total": order.total,
+      "purchase date": order.created,
+      "gamekey": order.gamekey,
+      "Number of books": order.subproducts.length,
+      "uid": order.uid,
+      "url": order.url,
+      "downloaded": oldEntry ? oldEntry.downloaded : false
+    });
+  }
+  
+  /* This will be the extended catalog with the books for each bundle */
+  /* Generate the updated catalog here */
+  for (var order of orders) {
+    // Find matching entry in old catalog
+    const oldEntry = old_ext_catalog_json.bundles.find(entry => 
+      entry.gamekey === order.gamekey || 
+      entry.uid === order.uid || 
+      entry.machine_name === order.product.machine_name
+    );
+
+    var books_obj = {
+      books: []
+    }
+    for (var subproduct of order.subproducts) {
+      var formats = []
+      var filteredDownloads = subproduct.downloads.filter((download) => {
+        return download.platform === 'ebook'
+      })
+      var downloadStructs = flatten(keypath.get(filteredDownloads, '[].download_struct'))
+      var filteredDownloadStructs = downloadStructs.filter((download) => {
+        if (!download.name || !download.url) {
+          return false
+        }
+
+        var normalizedFormat = normalizeFormat(download.name)
+        if (formats.indexOf(normalizedFormat) === -1) {
+          // Create format object directly
+          var formatDetails = {
+            format: normalizedFormat,
+            size: download.human_size,
+            download_urls: {}
+          };
+          
+          // Add available download URLs
+          if (download.url) {
+            if (download.url.web) {
+              formatDetails.download_urls.web = download.url.web;
+            }
+            if (download.url.bittorrent) {
+              formatDetails.download_urls.bittorrent = download.url.bittorrent;
+            }
+          }
+          
+          formats.push(formatDetails)
+        }
+      })
+
+      books_obj.books.push({
+        "Book Title": subproduct.human_name,
+        "Machine Name": subproduct.machine_name,
+        "Publisher": subproduct.payee.human_name,
+        "Available Formats": formats,
+        "icon": subproduct.icon,
+        "url": subproduct.url
+      })
+    }
+
+    ext_catalog_obj.bundles.push({
+      "human_name": order.product.human_name,
+      "machine_name": order.product.machine_name,
+      "amount_spent": order.amount_spent,
+      "total": order.total,
+      "purchase date": order.created,
+      "gamekey": order.gamekey,
+      "Number of books": order.subproducts.length,
+      "uid": order.uid,
+      "url": order.url,
+      "downloaded": oldEntry ? oldEntry.downloaded : false,
+      "books": books_obj.books
+    });
+  }
+
   options.sort((a, b) => {
     return a.localeCompare(b)
   })
 
   process.stdout.write('\x1Bc') // Clear console
 
-  inquirer.prompt({
-    type: 'checkbox',
-    name: 'bundle',
-    message: 'Select bundles to download',
-    choices: options,
-    pageSize: getWindowHeight() - 2
-  }).then((answers) => {
-    next(null, orders.filter((item) => {
-      return answers.bundle.indexOf(item.product.human_name) !== -1
-    }))
-  })
+  if (commander.bundles) {
+    // Find first N undownloaded bundles
+    var undownloadedBundles = orders.filter(order => {
+      const oldEntry = catalog_obj.bundles.find(entry => 
+        entry.gamekey === order.gamekey || 
+        entry.uid === order.uid || 
+        entry.machine_name === order.product.machine_name
+      );
+      return !oldEntry || !oldEntry.downloaded;
+    }).slice(0, NUMBER_OF_BUNDLES);
+
+    // Update the orders array to only include the undownloaded bundles
+    orders = undownloadedBundles;
+    
+    // Continue with download process
+    next(null, orders);
+  }
+  else {
+    inquirer.prompt({
+      type: 'checkbox',
+      name: 'bundle',
+      message: 'Select bundles to download',
+      choices: options,
+      pageSize: getWindowHeight() - 2
+    }).then((answers) => {
+      next(null, orders.filter((item) => {
+        return answers.bundle.indexOf(item.product.human_name) !== -1
+      }))
+    })
+  }
 }
+
 
 function sortBundles (next, bundles) {
   next(null, bundles.sort((a, b) => {
@@ -417,6 +633,154 @@ function downloadBook (bundle, name, download, callback) {
   })
 }
 
+function recordBundles (next, bundles) {
+  if (!bundles.length) {
+    logger.info(colors.green('No bundles selected, exiting'))
+    return next()
+  }
+
+  var downloads = []
+
+  for (var bundle of bundles) {
+    var bundleName = bundle.product.human_name
+    var bundleDownloads = []
+    var bundleFormats = []
+
+    if (commander.csv) {
+      logger.info('%s', JSON.stringify(bundleName))
+    } else if (commander.json) {
+      logger.info('{"Bundle Title":%s}', JSON.stringify(bundleName))
+    } else {
+      logger.info('Bundle Title: [%s]', JSON.stringify(bundleName))
+    }
+
+    for (var subproduct of bundle.subproducts) {
+      var filteredDownloads = subproduct.downloads.filter((download) => {
+        return download.platform === 'ebook'
+      })
+
+      var downloadStructs = flatten(keypath.get(filteredDownloads, '[].download_struct'))
+      var filteredDownloadStructs = downloadStructs.filter((download) => {
+        if (!download.name || !download.url) {
+          return false
+        }
+
+        var normalizedFormat = normalizeFormat(download.name)
+        
+        // Debug to see the formats found
+        //console.log(normalizedFormat)
+        if (bundleFormats.indexOf(normalizedFormat) === -1 && SUPPORTED_FORMATS.indexOf(normalizedFormat) !== -1) {
+          bundleFormats.push(normalizedFormat)
+        }
+
+        return commander.format === 'all' || commander.format === 'any' || normalizedFormat === commander.format
+      })
+
+      var bestIndex = 10
+      for (var filteredDownload of filteredDownloadStructs) {
+        // This is where we pick the format we want
+        var index
+        var tempBundles = []
+        
+        if (commander.format === 'any') {
+          // Now we check where the format sits on the list of preference
+          var normalizedFormat = normalizeFormat(filteredDownload.name)
+          index = ORDERED_FORMATS.indexOf(normalizedFormat)
+          if (index < bestIndex) {
+            if (bestIndex < 10) {
+              bundleDownloads.pop()
+            }
+            bestIndex = index
+            bundleDownloads.push({
+              bundle: bundleName,
+              download: filteredDownload,
+              name: subproduct.human_name
+            })
+          }
+        }
+        else {
+          bundleDownloads.push({
+            bundle: bundleName,
+            download: filteredDownload,
+            name: subproduct.human_name
+          })
+        }
+                /*
+        if (commander.format === 'all') {
+          var normalizedFormat = normalizeFormat(filteredDownload.name)
+          bundleDownloads.push({
+            bundle: bundleName,
+            download: filteredDownload,
+            name: subproduct.human_name
+          })
+        } */
+      }
+    }
+
+    if (!bundleDownloads.length) {
+      logger.error(colors.red('No downloads found matching the right format (%s) for bundle (%s), available formats: (%s)'), commander.format, bundleName, bundleFormats.sort().join(', '))
+      continue
+    }
+
+    for (var download of bundleDownloads) {
+      downloads.push(download)
+    }
+  }
+
+  if (!downloads.length) {
+    logger.error(colors.red('No downloads found matching the right format (%s), exiting'), commander.format)
+  }
+
+  async.each(downloads, (download, next) => {
+    limiter.submit((next) => {
+      if(commander.csv) {
+        logger.info('%s, %s, %s, %s, %s', 
+          JSON.stringify(download.bundle), 
+          JSON.stringify(download.name),
+          JSON.stringify(download.download.name), 
+          JSON.stringify(download.download.human_size), 
+          JSON.stringify(downloads.indexOf(download) + 1)
+        )
+      } else if(commander.json) {
+        logger.info('{"Bundle":%s,"Title":%s,"Format":%s,"Size":%s,"Index":%s}', 
+          JSON.stringify(download.bundle), 
+          JSON.stringify(download.name),
+          JSON.stringify(download.download.name), 
+          JSON.stringify(download.download.human_size), 
+          JSON.stringify(downloads.indexOf(download) + 1)
+        )
+      } else {
+        logger.info('Book: %s - %s (%s) (%s)... (%s/%s)', 
+          JSON.stringify(download.bundle), 
+          JSON.stringify(download.name),
+          JSON.stringify(download.download.name), 
+          JSON.stringify(download.download.human_size), 
+          JSON.stringify(downloads.indexOf(download) + 1),
+          JSON.stringify(downloads.length))
+      }
+      next()
+      /* downloadBook(download.bundle, download.name, download.download, (error, skipped) => {
+        if (error) {
+          return next(error)
+        }
+
+        if (skipped) {
+          console.log('Skipped downloading of %s - %s (%s) (%s) - already exists... (%s/%s)', download.bundle, download.name, download.download.name, download.download.human_size, colors.yellow(downloads.indexOf(download) + 1), colors.yellow(downloads.length))
+        }
+
+        next()
+      }) */
+    }, next)
+  }, (error) => {
+    if (error) {
+      return next(error)
+    }
+
+    logger.info('Done')
+    next()
+  })
+}
+
 function downloadBundles (next, bundles) {
   if (!bundles.length) {
     console.log(colors.green('No bundles selected, exiting'))
@@ -424,6 +788,7 @@ function downloadBundles (next, bundles) {
   }
 
   var downloads = []
+  var downloadedBundles = new Set() // Track which bundles were successfully downloaded
 
   for (var bundle of bundles) {
     var bundleName = bundle.product.human_name
@@ -501,6 +866,8 @@ function downloadBundles (next, bundles) {
           console.log('Skipped downloading of %s - %s (%s) (%s) - already exists... (%s/%s)', download.bundle, download.name, download.download.name, download.download.human_size, colors.yellow(downloads.indexOf(download) + 1), colors.yellow(downloads.length))
         }
 
+        // Mark this bundle as downloaded if it was successful
+        downloadedBundles.add(download.bundle)
         next()
       })
     }, next)
@@ -509,9 +876,45 @@ function downloadBundles (next, bundles) {
       return next(error)
     }
 
+    // Only mark bundles as downloaded if they were successfully downloaded
+    for (var bundle of catalog_obj.bundles) {
+      if (downloadedBundles.has(bundle.human_name)) {
+        bundle.downloaded = true
+      }
+    }
+
+    // Also update the extended catalog
+    for (var bundle of ext_catalog_obj.bundles) {
+      if (downloadedBundles.has(bundle.human_name)) {
+        bundle.downloaded = true
+      }
+    }
+
     console.log(colors.green('Done'))
     next()
   })
+}
+
+function storeCatalog (next) {
+  var json = JSON.stringify(catalog_obj, null, 2);
+  var fs = require('fs');
+  fs.writeFile(catalog_file, json, (err) => {
+    if (err) {
+      console.error('Error writing to file:', err);
+    } else {
+      console.log('File written successfully!');
+    }
+  });
+  var json = JSON.stringify(ext_catalog_obj, null, 2);
+  var fs = require('fs');
+  fs.writeFile(ext_catalog_file, json, (err) => {
+    if (err) {
+      console.error('Error writing to file:', err);
+    } else {
+      console.log('File written successfully!');
+    }
+  });
+  next()
 }
 
 flow.then(loadConfig)
@@ -520,7 +923,9 @@ flow.when((session) => !session, authenticate)
 flow.then(fetchOrders)
 flow.when(!commander.all, displayOrders)
 flow.when(commander.all, sortBundles)
-flow.then(downloadBundles)
+flow.when(commander.record, recordBundles)
+flow.when(!commander.record, downloadBundles)
+flow.when(commander.bundles, storeCatalog)
 
 flow.catch((error) => {
   console.error(colors.red('An error occured, exiting.'))
