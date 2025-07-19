@@ -20,6 +20,22 @@ const fs = require('fs')
 const os = require('os')
 const userAgent = util.format('Humblebundle-Ebook-Downloader/%s', packageInfo.version)
 
+// Discord webhook support
+let discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
+
+function sendDiscordWebhook(message) {
+  if (!discordWebhookUrl) return;
+  request.post({
+    url: discordWebhookUrl,
+    json: true,
+    body: { content: message }
+  }, (err, res, body) => {
+    if (err) {
+      console.error('Failed to send Discord webhook:', err);
+    }
+  });
+}
+
 const SUPPORTED_FORMATS = ['epub', 'mobi', 'pdf', 'pdf_hd', 'cbz']
 const ALLOWED_FORMATS = SUPPORTED_FORMATS.concat(['all', 'any']).sort()
 const PREFERRED_FORMATS = ['cbz', 'pdf_hd', 'pdf', 'epub', 'mobi']
@@ -122,7 +138,12 @@ commander
   .option('-c, --csv', 'Record the audit in csv format')
   .option('-j, --json', 'Record the audit in json format')
   .option('--debug', 'Enable debug logging', false)
-  .parse(process.argv)
+  .option('--discord-webhook-url <url>', 'Discord webhook URL for notifications')
+  .parse(process.argv);
+
+if (commander.discordWebhookUrl) {
+  discordWebhookUrl = commander.discordWebhookUrl;
+}
 
 if (ALLOWED_FORMATS.indexOf(commander.format) === -1) {
   console.error(colors.red('Invalid format selected.'))
@@ -626,7 +647,9 @@ function downloadBook (bundle, name, download, callback) {
 
       request.get({
         url: download.url.web
-      }).on('error', (error) => {
+      })
+      .on('error', (error) => {
+        sendDiscordWebhook(`Error downloading ${name} from bundle: ${bundle}: ${error}`);
         callback(error)
       }).pipe(file)
     })
@@ -789,6 +812,7 @@ function downloadBundles (next, bundles) {
 
   var downloads = []
   var downloadedBundles = new Set() // Track which bundles were successfully downloaded
+  var bundleStatus = {} // Track success/failure for each bundle
 
   for (var bundle of bundles) {
     var bundleName = bundle.product.human_name
@@ -859,6 +883,8 @@ function downloadBundles (next, bundles) {
       console.log('Downloading %s - %s (%s) (%s)... (%s/%s)', download.bundle, download.name, download.download.name, download.download.human_size, colors.yellow(downloads.indexOf(download) + 1), colors.yellow(downloads.length))
       downloadBook(download.bundle, download.name, download.download, (error, skipped) => {
         if (error) {
+          // Mark bundle as failed
+          bundleStatus[download.bundle] = 'failed';
           return next(error)
         }
 
@@ -868,6 +894,9 @@ function downloadBundles (next, bundles) {
 
         // Mark this bundle as downloaded if it was successful
         downloadedBundles.add(download.bundle)
+        if (!bundleStatus[download.bundle]) {
+          bundleStatus[download.bundle] = 'success';
+        }
         next()
       })
     }, next)
@@ -887,6 +916,15 @@ function downloadBundles (next, bundles) {
     for (var bundle of ext_catalog_obj.bundles) {
       if (downloadedBundles.has(bundle.human_name)) {
         bundle.downloaded = true
+      }
+    }
+
+    // Send a single Discord notification per bundle
+    for (const bundleName of Object.keys(bundleStatus)) {
+      if (bundleStatus[bundleName] === 'success') {
+        sendDiscordWebhook(`Bundle downloaded successfully: ${bundleName}`);
+      } else if (bundleStatus[bundleName] === 'failed') {
+        sendDiscordWebhook(`Bundle failed to download: ${bundleName}`);
       }
     }
 
@@ -932,3 +970,13 @@ flow.catch((error) => {
   console.error(error)
   process.exit(1)
 })
+
+// Add webhook notification for fatal errors in main flow
+process.on('uncaughtException', (err) => {
+  sendDiscordWebhook(`Downloader crashed: ${err.stack || err}`);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason, p) => {
+  sendDiscordWebhook(`Downloader unhandled rejection: ${reason}`);
+  process.exit(1);
+});

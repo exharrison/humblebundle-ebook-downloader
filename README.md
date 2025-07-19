@@ -45,6 +45,27 @@ $ humblebundle-ebook-downloader --help
     -h, --help                                 output usage information
 ```
 
+## Discord Webhook Notifications
+
+You can receive Discord notifications when a bundle is downloaded (success or failure).
+
+- Only one notification is sent per bundle, not per file.
+- To enable notifications, provide your Discord webhook URL via the `--discord-webhook-url` command line argument or the `DISCORD_WEBHOOK_URL` environment variable.
+
+Example usage:
+
+```bash
+DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..." node index.js ...
+```
+
+or
+
+```bash
+node index.js --discord-webhook-url "https://discord.com/api/webhooks/..." ...
+```
+
+You will receive a message in your Discord channel for each bundle indicating whether it was downloaded successfully or failed.
+
 ## Contributors
 - [J. Longman](https://github.com/jlongman)
 - [Johannes Löthberg](https://github.com/kyrias)

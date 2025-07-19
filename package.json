@@ -1,10 +1,6 @@
 {
   "name": "humblebundle-ebook-downloader",
-<<<<<<< HEAD
-  "version": "1.0.19",
-=======
-  "version": "1.0.18",
->>>>>>> 72e3cc3 (1.0.18)
+  "version": "1.0.19a",
   "license": "Unlicense",
   "main": "index.js",
   "bin": {
@@ -18,6 +14,7 @@
     "url": "https://github.com/DMarby/humblebundle-ebook-downloader.git"
   },
   "author": "David Marby <david@dmarby.se> http://dmarby.se",
+  "description": "Now supports --discord-webhook-url CLI argument or DISCORD_WEBHOOK_URL env variable for notifications.",
   "dependencies": {
     "async": "^2.6.2",
     "bottleneck": "^2.17.1",
@@ -29,7 +26,8 @@
     "nasa-keypath": "0.0.1",
     "nightmare": "^3.0.1",
     "request": "^2.88.0",
-    "sanitize-filename": "^1.6.1"
+    "sanitize-filename": "^1.6.1",
+    "winston": "^3.17.0"
   },
   "devDependencies": {
     "standard": "^12.0.1"
